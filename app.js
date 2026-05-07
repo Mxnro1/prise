@@ -1,0 +1,845 @@
+const bybitHosts = ["https://api.bybit.com", "https://api.bytick.com"];
+const usdRubApi =
+  "https://iss.moex.com/iss/engines/currency/markets/selt/securities/USD000UTSTOM.json?iss.meta=off&iss.only=marketdata&marketdata.columns=BOARDID,SECID,LAST,TIME,UPDATETIME,CHANGE,LASTTOPREVPRICE,WAPTOPREVWAPRICEPRCNT";
+const usdRubFallbackApi = "https://open.er-api.com/v6/latest/USD";
+const refreshIntervalMs = 5_000;
+const chartInterval = "15";
+const chartLimit = 96;
+const chartCacheMs = 15_000;
+const storageKey = "bybit-dashboard-assets";
+const themeStorageKey = "bybit-dashboard-theme";
+
+const defaultAssets = [
+  {
+    key: "bitcoin",
+    symbol: "BTCUSDT",
+    baseCoin: "BTC",
+    name: "Bitcoin",
+    pair: "BTCUSDT",
+    icon: "₿",
+    accentClass: "accent-orange",
+  },
+  {
+    key: "ethereum",
+    symbol: "ETHUSDT",
+    baseCoin: "ETH",
+    name: "Ethereum",
+    pair: "ETHUSDT",
+    icon: "Ξ",
+    accentClass: "accent-blue",
+  },
+  {
+    key: "usd",
+    name: "Доллар",
+    pair: "USD / RUB",
+    icon: "$",
+    accentClass: "accent-red",
+  },
+  {
+    key: "tron",
+    symbol: "TRXUSDT",
+    baseCoin: "TRX",
+    name: "TRON",
+    pair: "TRXUSDT",
+    icon: "T",
+    accentClass: "accent-teal",
+  },
+];
+
+const fallbackInstruments = [
+  { symbol: "SOLUSDT", baseCoin: "SOL" },
+  { symbol: "BNBUSDT", baseCoin: "BNB" },
+  { symbol: "XRPUSDT", baseCoin: "XRP" },
+  { symbol: "DOGEUSDT", baseCoin: "DOGE" },
+  { symbol: "ADAUSDT", baseCoin: "ADA" },
+  { symbol: "LINKUSDT", baseCoin: "LINK" },
+  { symbol: "TONUSDT", baseCoin: "TON" },
+  { symbol: "AVAXUSDT", baseCoin: "AVAX" },
+];
+
+const popularSymbols = [
+  "SOLUSDT",
+  "BNBUSDT",
+  "XRPUSDT",
+  "DOGEUSDT",
+  "ADAUSDT",
+  "LINKUSDT",
+  "TONUSDT",
+  "AVAXUSDT",
+  "LTCUSDT",
+  "DOTUSDT",
+];
+
+const accents = [
+  "accent-violet",
+  "accent-cyan",
+  "accent-green",
+  "accent-yellow",
+  "accent-pink",
+  "accent-indigo",
+];
+
+const usdt = new Intl.NumberFormat("ru-RU", {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 2,
+});
+
+const rub = new Intl.NumberFormat("ru-RU", {
+  style: "currency",
+  currency: "RUB",
+  maximumFractionDigits: 2,
+});
+
+const compactUsd = new Intl.NumberFormat("ru-RU", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 4,
+  maximumFractionDigits: 4,
+});
+
+const percent = new Intl.NumberFormat("ru-RU", {
+  style: "percent",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const axisPrice = new Intl.NumberFormat("ru-RU", {
+  maximumFractionDigits: 0,
+});
+
+const rateGrid = document.querySelector("#rate-grid");
+const tableBody = document.querySelector("#rates-table");
+const refreshButton = document.querySelector("#refresh-button");
+const themeButton = document.querySelector("#theme-button");
+const themeIcon = document.querySelector("#theme-icon");
+const updatedEl = document.querySelector("#last-updated");
+const statusPill = document.querySelector("#status-pill");
+const toggleAddButton = document.querySelector("#toggle-add-button");
+const addForm = document.querySelector("#add-form");
+const hideAddButton = document.querySelector("#hide-add-button");
+const symbolSelect = document.querySelector("#symbol-select");
+const addStatus = document.querySelector("#add-status");
+const chartCache = new Map();
+
+let assets = [...defaultAssets, ...loadStoredAssets()];
+let instruments = [...fallbackInstruments];
+let activeChartSymbol = null;
+let latestRows = [];
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  themeIcon.textContent = theme === "dark" ? "☀" : "☾";
+  localStorage.setItem(themeStorageKey, theme);
+}
+
+function getInitialTheme() {
+  const savedTheme = localStorage.getItem(themeStorageKey);
+
+  if (savedTheme === "dark" || savedTheme === "light") {
+    return savedTheme;
+  }
+
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function loadStoredAssets() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(storageKey) || "[]");
+
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .filter((asset) => asset?.symbol && asset?.baseCoin)
+      .map((asset, index) => createAssetFromInstrument(asset, index, true));
+  } catch (error) {
+    return [];
+  }
+}
+
+function saveStoredAssets() {
+  const defaultSymbols = new Set(defaultAssets.map((asset) => asset.symbol).filter(Boolean));
+  const customAssets = assets
+    .filter((asset) => asset.symbol && !defaultSymbols.has(asset.symbol))
+    .map(({ symbol, baseCoin }) => ({ symbol, baseCoin }));
+
+  localStorage.setItem(storageKey, JSON.stringify(customAssets));
+}
+
+function createAssetFromInstrument(instrument, index = assets.length, removable = true) {
+  const baseCoin = instrument.baseCoin || instrument.symbol.replace(/USDT$/, "");
+
+  return {
+    key: instrument.symbol.toLowerCase(),
+    symbol: instrument.symbol,
+    baseCoin,
+    name: baseCoin,
+    pair: instrument.symbol,
+    icon: baseCoin.slice(0, 1),
+    accentClass: accents[index % accents.length],
+    removable,
+  };
+}
+
+function getBybitTickerUrl(symbol) {
+  return `/v5/market/tickers?category=linear&symbol=${symbol}`;
+}
+
+function getBybitKlineUrl(symbol) {
+  return `/v5/market/kline?category=linear&symbol=${symbol}&interval=${chartInterval}&limit=${chartLimit}`;
+}
+
+function getBybitInstrumentsUrl(cursor = "") {
+  const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+
+  return `/v5/market/instruments-info?category=linear&limit=1000${cursorParam}`;
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(`Request failed: ${url}`);
+  }
+
+  return response.json();
+}
+
+async function fetchBybitJson(path) {
+  let lastError;
+
+  for (const host of bybitHosts) {
+    try {
+      return await fetchJson(`${host}${path}`);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error("Bybit API is unavailable");
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function formatCryptoPrice(value) {
+  if (!Number.isFinite(value)) {
+    return "Нет данных";
+  }
+
+  if (value < 1) {
+    return compactUsd.format(value);
+  }
+
+  return usdt.format(value);
+}
+
+function formatChange(value) {
+  if (!Number.isFinite(value)) {
+    return "Нет данных";
+  }
+
+  return `${value >= 0 ? "+" : ""}${percent.format(value)}`;
+}
+
+function getChangeClass(value) {
+  if (!Number.isFinite(value)) {
+    return "";
+  }
+
+  return value >= 0 ? "positive" : "negative";
+}
+
+function renderCards(rows) {
+  rateGrid.innerHTML = rows
+    .map(
+      (row) => `
+        <article class="rate-card ${row.accentClass}" data-symbol="${escapeHtml(row.symbol || row.key)}">
+          ${
+            row.removable
+              ? `<button class="remove-card-button" type="button" data-remove-symbol="${escapeHtml(row.symbol)}" aria-label="Убрать ${escapeHtml(row.pair)}">×</button>`
+              : ""
+          }
+          <div>
+            <div class="asset-row">
+              <span class="asset-icon">${escapeHtml(row.icon)}</span>
+              <div>
+                <h2>${escapeHtml(row.name)}</h2>
+                <p>${escapeHtml(row.pair)}</p>
+              </div>
+            </div>
+            <strong>${escapeHtml(row.price)}</strong>
+          </div>
+          <small class="${getChangeClass(row.changeValue)}">${escapeHtml(row.changeText)}</small>
+        </article>
+      `,
+    )
+    .join("");
+}
+
+function renderTable(rows) {
+  tableBody.innerHTML = rows
+    .map((row) => {
+      const isActive = row.symbol === activeChartSymbol;
+      const buttonText = isActive ? "Скрыть" : "График";
+      const button = row.symbol
+        ? `<button class="chart-button" type="button" data-symbol="${escapeHtml(row.symbol)}" aria-expanded="${isActive}">
+            ${buttonText}
+          </button>`
+        : `<button class="chart-button" type="button" disabled>Нет</button>`;
+      const removeButton = row.removable
+        ? `<button class="remove-row-button" type="button" data-remove-symbol="${escapeHtml(row.symbol)}">Убрать</button>`
+        : "";
+      const chartRow = isActive
+        ? `
+          <tr class="chart-row">
+            <td colspan="6">
+              <div class="chart-panel">
+                <div class="chart-heading">
+                  <strong>${escapeHtml(row.pair)}</strong>
+                  <span>15m, последние 24 часа</span>
+                </div>
+                <canvas id="chart-${escapeHtml(row.symbol)}" height="210"></canvas>
+                <p class="chart-status" id="chart-status-${escapeHtml(row.symbol)}">Загружаю график...</p>
+              </div>
+            </td>
+          </tr>
+        `
+        : "";
+
+      return `
+        <tr class="${isActive ? "selected-row" : ""}">
+          <td class="asset-name">${escapeHtml(row.name)}</td>
+          <td>${escapeHtml(row.pair)}</td>
+          <td>${escapeHtml(row.price)}</td>
+          <td>${escapeHtml(row.markPrice)}</td>
+          <td class="${getChangeClass(row.changeValue)}">
+            ${escapeHtml(row.changeText)}
+          </td>
+          <td>
+            <div class="row-actions">
+              ${button}
+              ${removeButton}
+            </div>
+          </td>
+        </tr>
+        ${chartRow}
+      `;
+    })
+    .join("");
+
+  renderActiveChart();
+}
+
+function setLoading(isLoading) {
+  refreshButton.disabled = isLoading;
+  if (isLoading) {
+    statusPill.textContent = "Обновляю";
+  }
+}
+
+async function fetchRates() {
+  setLoading(true);
+
+  try {
+    const futuresAssets = assets.filter((asset) => asset.symbol);
+    const [tickerData, usdRub] = await Promise.all([
+      Promise.all(futuresAssets.map((asset) => fetchBybitTicker(asset.symbol))),
+      fetchUsdRubRate(),
+    ]);
+
+    const futuresTickers = new Map(tickerData.map((ticker) => [ticker.symbol, ticker]));
+
+    const rows = assets.map((asset) => {
+      if (asset.key === "usd") {
+        return {
+          ...asset,
+          price: Number.isFinite(usdRub.price) ? rub.format(usdRub.price) : "Нет данных",
+          markPrice: "—",
+          changeText: formatMoexChange(usdRub),
+          changeValue: Number.isFinite(usdRub.changePercent)
+            ? usdRub.changePercent / 100
+            : Number.isFinite(usdRub.changeRub)
+              ? usdRub.changeRub
+              : null,
+        };
+      }
+
+      const data = futuresTickers.get(asset.symbol) || {};
+      const price = Number(data.lastPrice);
+      const markPrice = Number(data.markPrice);
+      const change = Number(data.change);
+
+      return {
+        ...asset,
+        price: formatCryptoPrice(price),
+        markPrice: formatCryptoPrice(markPrice),
+        changeText: formatChange(change),
+        changeValue: change,
+      };
+    });
+
+    latestRows = rows;
+    renderCards(rows);
+    renderTable(rows);
+    updatedEl.textContent = `Обновлено: ${new Date().toLocaleTimeString("ru-RU")}`;
+    statusPill.textContent = "Онлайн";
+  } catch (error) {
+    statusPill.textContent = "Ошибка";
+    updatedEl.textContent = "Не удалось получить данные";
+    tableBody.innerHTML = `
+      <tr>
+        <td colspan="6">Проверь интернет или попробуй обновить еще раз.</td>
+      </tr>
+    `;
+  } finally {
+    refreshButton.disabled = false;
+  }
+}
+
+async function fetchUsdRubRate() {
+  try {
+    const moexData = await fetchJson(usdRubApi);
+    const moexRate = getMoexUsdRub(moexData);
+
+    if (Number.isFinite(moexRate.price)) {
+      return moexRate;
+    }
+  } catch (error) {
+    // MOEX can be blocked by browser/network policy; keep crypto quotes alive.
+  }
+
+  try {
+    const fallbackData = await fetchJson(usdRubFallbackApi);
+    const price = Number(fallbackData.rates?.RUB);
+
+    return {
+      price,
+      time: "резерв",
+      changeRub: null,
+      changePercent: null,
+    };
+  } catch (error) {
+    return {
+      price: null,
+      time: null,
+      changeRub: null,
+      changePercent: null,
+    };
+  }
+}
+
+async function fetchBybitTicker(symbol) {
+  const data = await fetchBybitJson(getBybitTickerUrl(symbol));
+
+  if (data.retCode !== 0) {
+    throw new Error(data.retMsg || "Bybit API returned an error");
+  }
+
+  const ticker = data.result?.list?.[0];
+
+  if (!ticker) {
+    throw new Error("Bybit ticker is empty");
+  }
+
+  return {
+    symbol,
+    source: "Bybit",
+    lastPrice: Number(ticker.lastPrice),
+    markPrice: Number(ticker.markPrice),
+    change: Number(ticker.price24hPcnt),
+  };
+}
+
+function formatMoexChange(usdRub) {
+  if (Number.isFinite(usdRub.changePercent) && usdRub.changePercent !== 0) {
+    return `${usdRub.changePercent > 0 ? "+" : ""}${usdRub.changePercent.toFixed(2)} %`;
+  }
+
+  if (Number.isFinite(usdRub.changeRub) && usdRub.changeRub !== 0) {
+    return `${usdRub.changeRub > 0 ? "+" : ""}${usdRub.changeRub.toFixed(2)} ₽`;
+  }
+
+  return usdRub.time ? `MOEX ${usdRub.time}` : "Нет данных";
+}
+
+function getMoexUsdRub(data) {
+  const columns = data.marketdata?.columns || [];
+  const rows = data.marketdata?.data || [];
+  const lastIndex = columns.indexOf("LAST");
+  const boardIndex = columns.indexOf("BOARDID");
+  const timeIndex = columns.indexOf("TIME");
+  const updateTimeIndex = columns.indexOf("UPDATETIME");
+  const changeRubIndex = columns.indexOf("CHANGE");
+  const lastToPrevIndex = columns.indexOf("LASTTOPREVPRICE");
+  const wapPercentIndex = columns.indexOf("WAPTOPREVWAPRICEPRCNT");
+  const row =
+    rows.find(
+      (item) =>
+        item[boardIndex] === "CETS" && Number.isFinite(Number(item[lastIndex])),
+    ) || rows.find((item) => Number.isFinite(Number(item[lastIndex])));
+
+  if (!row) {
+    return {
+      price: null,
+      time: null,
+      changeRub: null,
+      changePercent: null,
+    };
+  }
+
+  const lastToPrev = Number(row[lastToPrevIndex]);
+  const wapPercent = Number(row[wapPercentIndex]);
+
+  return {
+    price: Number(row[lastIndex]),
+    time: row[timeIndex] || row[updateTimeIndex],
+    changeRub: Number(row[changeRubIndex]),
+    changePercent: Number.isFinite(lastToPrev) ? lastToPrev : wapPercent,
+  };
+}
+
+function populateSymbolSelect() {
+  const selectedSymbols = new Set(assets.map((asset) => asset.symbol).filter(Boolean));
+  const available = instruments.filter((instrument) => !selectedSymbols.has(instrument.symbol));
+
+  symbolSelect.innerHTML = available.length
+    ? available
+        .map(
+          (instrument) => `
+            <option value="${escapeHtml(instrument.symbol)}">
+              ${escapeHtml(instrument.symbol)}
+            </option>
+          `,
+        )
+        .join("")
+    : '<option value="">Все доступные пары уже добавлены</option>';
+
+  symbolSelect.disabled = !available.length;
+}
+
+function removeAsset(symbol) {
+  const asset = assets.find((item) => item.symbol === symbol);
+
+  if (!asset?.removable) {
+    return;
+  }
+
+  assets = assets.filter((item) => item.symbol !== symbol);
+  latestRows = latestRows.filter((row) => row.symbol !== symbol);
+  chartCache.delete(symbol);
+
+  if (activeChartSymbol === symbol) {
+    activeChartSymbol = null;
+  }
+
+  saveStoredAssets();
+  populateSymbolSelect();
+  renderCards(latestRows);
+  renderTable(latestRows);
+  addStatus.textContent = `${symbol} убран`;
+}
+
+async function loadBybitInstruments() {
+  try {
+    let cursor = "";
+    const loaded = [];
+
+    for (let page = 0; page < 4; page += 1) {
+      const data = await fetchBybitJson(getBybitInstrumentsUrl(cursor));
+
+      if (data.retCode !== 0) {
+        throw new Error(data.retMsg || "Bybit instruments API returned an error");
+      }
+
+      loaded.push(...(data.result?.list || []));
+      cursor = data.result?.nextPageCursor || "";
+
+      if (!cursor) {
+        break;
+      }
+    }
+
+    instruments = loaded
+      .filter(
+        (instrument) =>
+          instrument.symbol?.endsWith("USDT") &&
+          instrument.contractType === "LinearPerpetual" &&
+          instrument.quoteCoin === "USDT" &&
+          instrument.settleCoin === "USDT" &&
+          instrument.status === "Trading",
+      )
+      .map((instrument) => ({
+        symbol: instrument.symbol,
+        baseCoin: instrument.baseCoin || instrument.symbol.replace(/USDT$/, ""),
+      }))
+      .sort(sortInstruments);
+
+    populateSymbolSelect();
+    addStatus.textContent = "";
+  } catch (error) {
+    instruments = [...fallbackInstruments];
+    populateSymbolSelect();
+    addStatus.textContent = "Список Bybit не загрузился, показаны популярные Bybit USDT пары";
+  }
+}
+
+function sortInstruments(a, b) {
+  const aPopularIndex = popularSymbols.indexOf(a.symbol);
+  const bPopularIndex = popularSymbols.indexOf(b.symbol);
+
+  if (aPopularIndex !== -1 || bPopularIndex !== -1) {
+    return (aPopularIndex === -1 ? 999 : aPopularIndex) - (bPopularIndex === -1 ? 999 : bPopularIndex);
+  }
+
+  return a.symbol.localeCompare(b.symbol);
+}
+
+refreshButton.addEventListener("click", fetchRates);
+
+themeButton.addEventListener("click", () => {
+  const nextTheme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  applyTheme(nextTheme);
+  renderActiveChart();
+});
+
+toggleAddButton.addEventListener("click", () => {
+  addForm.hidden = !addForm.hidden;
+
+  if (!addForm.hidden) {
+    symbolSelect.focus();
+  }
+});
+
+hideAddButton.addEventListener("click", () => {
+  addForm.hidden = true;
+  addStatus.textContent = "";
+});
+
+addForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+
+  const symbol = symbolSelect.value;
+  const instrument = instruments.find((item) => item.symbol === symbol);
+
+  if (!instrument || assets.some((asset) => asset.symbol === symbol)) {
+    return;
+  }
+
+  assets = [...assets, createAssetFromInstrument(instrument)];
+  saveStoredAssets();
+  populateSymbolSelect();
+  addStatus.textContent = `${symbol} добавлен`;
+  fetchRates();
+});
+
+tableBody.addEventListener("click", (event) => {
+  const removeButton = event.target.closest(".remove-row-button");
+
+  if (removeButton) {
+    removeAsset(removeButton.dataset.removeSymbol);
+    return;
+  }
+
+  const button = event.target.closest(".chart-button");
+
+  if (!button || button.disabled) {
+    return;
+  }
+
+  const { symbol } = button.dataset;
+  activeChartSymbol = activeChartSymbol === symbol ? null : symbol;
+  renderTable(latestRows);
+});
+
+rateGrid.addEventListener("click", (event) => {
+  const removeButton = event.target.closest(".remove-card-button");
+
+  if (!removeButton) {
+    return;
+  }
+
+  removeAsset(removeButton.dataset.removeSymbol);
+});
+
+async function fetchChartData(symbol) {
+  const cached = chartCache.get(symbol);
+
+  if (cached && Date.now() - cached.updatedAt < chartCacheMs) {
+    return cached.candles;
+  }
+
+  const candles = await fetchBybitChartData(symbol);
+
+  chartCache.set(symbol, {
+    candles,
+    updatedAt: Date.now(),
+  });
+  return candles;
+}
+
+async function fetchBybitChartData(symbol) {
+  const data = await fetchBybitJson(getBybitKlineUrl(symbol));
+
+  if (data.retCode !== 0) {
+    throw new Error(data.retMsg || "Bybit kline API returned an error");
+  }
+
+  return (data.result?.list || [])
+    .map((item) => ({
+      time: Number(item[0]),
+      close: Number(item[4]),
+    }))
+    .filter((item) => Number.isFinite(item.time) && Number.isFinite(item.close))
+    .sort((a, b) => a.time - b.time);
+}
+
+function drawChart(canvas, candles) {
+  const context = canvas.getContext("2d");
+  const styles = getComputedStyle(document.documentElement);
+  const mutedColor = styles.getPropertyValue("--muted").trim();
+  const lineColor = styles.getPropertyValue("--line").trim();
+  const softLineColor =
+    document.documentElement.dataset.theme === "dark" ? "#223044" : "#edf1f7";
+  const ratio = window.devicePixelRatio || 1;
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  const padding = {
+    top: 18,
+    right: 18,
+    bottom: 34,
+    left: 76,
+  };
+
+  canvas.width = width * ratio;
+  canvas.height = height * ratio;
+  context.scale(ratio, ratio);
+  context.clearRect(0, 0, width, height);
+
+  if (candles.length < 2) {
+    return;
+  }
+
+  const closes = candles.map((item) => item.close);
+  const min = Math.min(...closes);
+  const max = Math.max(...closes);
+  const range = max - min || 1;
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+
+  context.strokeStyle = lineColor;
+  context.lineWidth = 1;
+  context.beginPath();
+  context.moveTo(padding.left, padding.top);
+  context.lineTo(padding.left, height - padding.bottom);
+  context.lineTo(width - padding.right, height - padding.bottom);
+  context.stroke();
+
+  context.fillStyle = mutedColor;
+  context.font =
+    '12px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  context.textBaseline = "middle";
+  context.textAlign = "right";
+
+  const priceTicks = 4;
+
+  for (let tick = 0; tick <= priceTicks; tick += 1) {
+    const value = max - (range / priceTicks) * tick;
+    const y = padding.top + (tick / priceTicks) * plotHeight;
+
+    context.strokeStyle = tick === priceTicks ? lineColor : softLineColor;
+    context.beginPath();
+    context.moveTo(padding.left, y);
+    context.lineTo(width - padding.right, y);
+    context.stroke();
+
+    context.fillText(formatAxisPrice(value), padding.left - 10, y);
+  }
+
+  context.textBaseline = "top";
+  context.textAlign = "center";
+
+  const timeIndexes = [0, Math.floor((candles.length - 1) / 2), candles.length - 1];
+
+  timeIndexes.forEach((index) => {
+    const candle = candles[index];
+    const x = padding.left + (index / (candles.length - 1)) * plotWidth;
+
+    context.fillText(formatAxisTime(candle.time), x, height - padding.bottom + 10);
+  });
+
+  context.strokeStyle = candles.at(-1).close >= candles[0].close ? "#118a51" : "#c2413a";
+  context.lineWidth = 3;
+  context.lineJoin = "round";
+  context.lineCap = "round";
+  context.beginPath();
+
+  candles.forEach((candle, index) => {
+    const x = padding.left + (index / (candles.length - 1)) * plotWidth;
+    const y = padding.top + ((max - candle.close) / range) * plotHeight;
+
+    if (index === 0) {
+      context.moveTo(x, y);
+    } else {
+      context.lineTo(x, y);
+    }
+  });
+
+  context.stroke();
+}
+
+function formatAxisPrice(value) {
+  if (value < 1) {
+    return value.toFixed(4);
+  }
+
+  if (value < 100) {
+    return value.toFixed(2);
+  }
+
+  return axisPrice.format(value);
+}
+
+function formatAxisTime(timestamp) {
+  return new Date(timestamp).toLocaleString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+async function renderActiveChart() {
+  if (!activeChartSymbol) {
+    return;
+  }
+
+  const canvas = document.querySelector(`#chart-${activeChartSymbol}`);
+  const status = document.querySelector(`#chart-status-${activeChartSymbol}`);
+
+  if (!canvas || !status) {
+    return;
+  }
+
+  try {
+    const candles = await fetchChartData(activeChartSymbol);
+    drawChart(canvas, candles);
+    status.textContent = candles.length ? "" : "Нет данных для графика";
+  } catch (error) {
+    status.textContent = "Не удалось загрузить график";
+  }
+}
+
+applyTheme(getInitialTheme());
+populateSymbolSelect();
+loadBybitInstruments();
+fetchRates();
+setInterval(fetchRates, refreshIntervalMs);
