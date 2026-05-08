@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Курсы</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0f1214;
+        --panel: #171c20;
+        --panel-2: #20272c;
+        --text: #f2f5f7;
+        --muted: #9ca8b3;
+        --line: #2c353d;
+        --green: #36c787;
+        --red: #ff6b6b;
+        --gold: #e6b84c;
+        --blue: #6aa7ff;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      main {
+        width: min(1120px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 34px 0 44px;
+      }
+
+      header {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 18px;
+        margin-bottom: 22px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(30px, 5vw, 52px);
+        line-height: 1;
+        letter-spacing: 0;
+      }
+
+      .subtitle {
+        margin: 10px 0 0;
+        color: var(--muted);
+        font-size: 15px;
+      }
+
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 38px;
+        padding: 9px 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        color: var(--muted);
+        white-space: nowrap;
+      }
+
+      .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 0 4px rgba(54, 199, 135, 0.12);
+      }
+
+      .dot.loading {
+        background: var(--gold);
+        box-shadow: 0 0 0 4px rgba(230, 184, 76, 0.12);
+      }
+
+      .dot.error {
+        background: var(--red);
+        box-shadow: 0 0 0 4px rgba(255, 107, 107, 0.12);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .card {
+        min-height: 220px;
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: linear-gradient(180deg, var(--panel), #12171a);
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+
+      .asset {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .ticker {
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .name {
+        margin-top: 6px;
+        font-size: 18px;
+        font-weight: 750;
+      }
+
+      .badge {
+        align-self: start;
+        padding: 6px 8px;
+        border-radius: 6px;
+        background: var(--panel-2);
+        color: var(--muted);
+        font-size: 12px;
+        text-align: right;
+      }
+
+      .price {
+        margin: 24px 0 8px;
+        font-size: clamp(28px, 4vw, 42px);
+        font-weight: 800;
+        line-height: 1;
+        overflow-wrap: anywhere;
+      }
+
+      .change {
+        display: inline-flex;
+        width: fit-content;
+        min-height: 30px;
+        align-items: center;
+        padding: 6px 9px;
+        border-radius: 6px;
+        background: rgba(156, 168, 179, 0.1);
+        color: var(--muted);
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .change.up {
+        background: rgba(54, 199, 135, 0.12);
+        color: var(--green);
+      }
+
+      .change.down {
+        background: rgba(255, 107, 107, 0.12);
+        color: var(--red);
+      }
+
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      .stat {
+        border-top: 1px solid var(--line);
+        padding-top: 10px;
+      }
+
+      .label {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .value {
+        margin-top: 4px;
+        font-size: 14px;
+        font-weight: 700;
+        overflow-wrap: anywhere;
+      }
+
+      .note {
+        margin-top: 18px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .error-text {
+        color: var(--red);
+      }
+
+      @media (max-width: 940px) {
+        .grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 620px) {
+        main {
+          width: min(100% - 22px, 1120px);
+          padding-top: 22px;
+        }
+
+        header {
+          display: block;
+        }
+
+        .status {
+          margin-top: 16px;
+          width: fit-content;
+        }
+
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>Курсы</h1>
+          <p class="subtitle">BTC, ETH, TRX с Bybit USDT perpetual. USD/RUB берется из Bybit P2P USDT/RUB.</p>
+        </div>
+        <div class="status" aria-live="polite">
+          <span class="dot loading" id="dot"></span>
+          <span id="statusText">Загрузка...</span>
+        </div>
+      </header>
+
+      <section class="grid" id="grid"></section>
+    </main>
+
+    <script>
+      const grid = document.querySelector("#grid");
+      const statusText = document.querySelector("#statusText");
+      const dot = document.querySelector("#dot");
+      const cards = new Map();
+      const apiUrl = location.protocol === "file:" ? "http://127.0.0.1:8000/api/rates" : "/api/rates";
+
+      const usd = new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+        maximumFractionDigits: 2,
+      });
+      const rub = new Intl.NumberFormat("ru-RU", {
+        style: "currency",
+        currency: "RUB",
+        maximumFractionDigits: 2,
+      });
+      const compact = new Intl.NumberFormat("en-US", {
+        notation: "compact",
+        maximumFractionDigits: 2,
+      });
+
+      function formatPrice(rate) {
+        if (rate.price === null || rate.price === undefined) return "Нет данных";
+        if (rate.symbol === "USD/RUB") return rub.format(rate.price);
+        if (rate.price < 1) return `$${Number(rate.price).toFixed(5)}`;
+        return usd.format(rate.price);
+      }
+
+      function formatNumber(value, currency = "$") {
+        if (value === null || value === undefined || Number.isNaN(Number(value))) return "-";
+        return `${currency}${compact.format(Number(value))}`;
+      }
+
+      function formatChange(value) {
+        if (value === null || value === undefined || Number.isNaN(Number(value))) return "24ч: -";
+        const sign = value > 0 ? "+" : "";
+        return `${sign}${value.toFixed(2)}%`;
+      }
+
+      function renderCard(rate) {
+        let card = cards.get(rate.id);
+        if (!card) {
+          card = document.createElement("article");
+          card.className = "card";
+          card.innerHTML = `
+            <div>
+              <div class="asset">
+                <div>
+                  <div class="ticker"></div>
+                  <div class="name"></div>
+                </div>
+                <div class="badge"></div>
+              </div>
+              <div class="price"></div>
+              <div class="change"></div>
+            </div>
+            <div>
+              <div class="stats">
+                <div class="stat">
+                  <div class="label">High 24h</div>
+                  <div class="value high"></div>
+                </div>
+                <div class="stat">
+                  <div class="label">Low 24h</div>
+                  <div class="value low"></div>
+                </div>
+                <div class="stat">
+                  <div class="label">Объем 24h</div>
+                  <div class="value volume"></div>
+                </div>
+                <div class="stat">
+                  <div class="label">Источник</div>
+                  <div class="value source"></div>
+                </div>
+              </div>
+              <div class="note"></div>
+            </div>
+          `;
+          cards.set(rate.id, card);
+          grid.append(card);
+        }
+
+        card.querySelector(".ticker").textContent = rate.symbol;
+        card.querySelector(".name").textContent = rate.name;
+        card.querySelector(".badge").textContent = rate.quote;
+        card.querySelector(".price").textContent = formatPrice(rate);
+
+        const change = card.querySelector(".change");
+        change.textContent = formatChange(rate.change24h);
+        change.className = "change";
+        if (rate.change24h > 0) change.classList.add("up");
+        if (rate.change24h < 0) change.classList.add("down");
+
+        const currency = rate.symbol === "USD/RUB" ? "₽" : "$";
+        card.querySelector(".high").textContent = formatNumber(rate.high24h, currency);
+        card.querySelector(".low").textContent = formatNumber(rate.low24h, currency);
+        card.querySelector(".volume").textContent = formatNumber(rate.turnover24h);
+        card.querySelector(".source").textContent = rate.source;
+
+        const note = card.querySelector(".note");
+        note.textContent = rate.error || rate.note || "";
+        note.className = rate.error ? "note error-text" : "note";
+      }
+
+      async function loadRates() {
+        dot.className = "dot loading";
+        statusText.textContent = "Обновляю...";
+        try {
+          const response = await fetch(apiUrl, { cache: "no-store" });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const data = await response.json();
+          data.rates.forEach(renderCard);
+
+          dot.className = "dot";
+          const updated = new Date(data.updatedAt * 1000).toLocaleTimeString("ru-RU");
+          statusText.textContent = `Обновлено ${updated}`;
+        } catch (error) {
+          dot.className = "dot error";
+          statusText.textContent = `Ошибка: ${error.message}`;
+        }
+      }
+
+      loadRates();
+      setInterval(loadRates, 7000);
+    </script>
+  </body>
+</html>
